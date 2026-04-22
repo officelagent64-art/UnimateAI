@@ -10,14 +10,16 @@ const N8N_WEBHOOK_URL = 'https://n8n-mcda.onrender.com/webhook-test/ia';
 
 // Vérifier session
 supabaseClient.auth.getSession().then(({ data: { session } }) => {
-    if (!session) {
+    const studentId = localStorage.getItem('student_id');
+    if (!session && !studentId) {
+        // Ni session Supabase ni localStorage → redirect login
         window.location.href = 'login.html';
     }
+    // Si session expirée mais student_id présent → on laisse passer
 });
 
 // ==================== FONCTIONS N8N ====================
 
-// ✅ MODIFICATION 1 — Ajout du paramètre historique
 async function sendToN8N(question, studentId, historique = []) {
     try {
         console.log('📤 Envoi à n8n:', { question, studentId, historique });
@@ -25,7 +27,6 @@ async function sendToN8N(question, studentId, historique = []) {
         const res = await fetch(N8N_WEBHOOK_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            // ✅ historique envoyé avec chaque requête
             body: JSON.stringify({ 
                 question, 
                 student_id: studentId,
@@ -478,7 +479,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         try {
-            // ✅ MODIFICATION 2 — Construire l'historique des 6 derniers messages
             const historique = session.messages
                 .slice(-6)
                 .map(m => ({
@@ -486,7 +486,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     content: m.text
                 }));
 
-            // ✅ Envoyer avec historique
             const response = await sendToN8N(text, studentId, historique);
 
             let reply = '';
@@ -550,7 +549,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 displayMessage(reply, false);
             }
 
-            // Recharger les demandes si c'est un certificat
             if (reply.includes('certificat') || reply.includes('récupérer')) {
                 const panelDemandes = document.getElementById('panel-demandes');
                 if (panelDemandes && !panelDemandes.classList.contains('hidden')) {
@@ -654,6 +652,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }, 100);
 
     window.addEventListener('resize', () => { adjustInputPosition(); adjustMessagesAlignment(); });
+
 });
 
 // ============================================================
@@ -667,7 +666,6 @@ const DEMANDE_LABELS = {
     'autre':                'Autre demande'
 };
 
-// -- Switch entre les deux onglets --
 window.switchTab = function(tab) {
     const btnChats    = document.getElementById('tab-chats');
     const btnDemandes = document.getElementById('tab-demandes');
@@ -702,7 +700,6 @@ window.switchTab = function(tab) {
     }
 };
 
-// -- Charger les demandes depuis Supabase --
 async function loadDemandes() {
     const list = document.getElementById('demandesList');
     if (!list) return;
@@ -744,7 +741,6 @@ async function loadDemandes() {
     }
 }
 
-// -- Générer le HTML d'une carte demande --
 function renderDemandeCard(demande) {
     const date  = new Date(demande.created_at).toLocaleDateString('fr-FR');
     const titre = DEMANDE_LABELS[demande.type_demande] || 'Certificat scolarité';
@@ -762,7 +758,6 @@ function renderDemandeCard(demande) {
         </div>`;
 }
 
-// -- Badge coloré selon le statut --
 function renderBadge(statut) {
     const config = {
         'en_attente': { label: 'En cours', css: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300' },
@@ -772,7 +767,6 @@ function renderBadge(statut) {
     return `<span class="shrink-0 px-2 py-0.5 rounded-full text-[10px] font-bold ${s.css}">${s.label}</span>`;
 }
 
-// -- Afficher le détail d'une demande --
 async function afficherDetailDemande(id) {
     try {
         const { data, error } = await supabaseClient
