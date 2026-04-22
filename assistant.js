@@ -6,7 +6,7 @@ const supabaseClient = createClient(
 );
 
 // ==================== N8N CONFIG ====================
-const N8N_WEBHOOK_URL = 'https://n8n-z4y4.onrender.com/webhook-test/ia';
+const N8N_WEBHOOK_URL = 'https://n8n-z4y4.onrender.com/webhook/ia';
 
 // Vérifier session
 supabaseClient.auth.getSession().then(({ data: { session } }) => {
@@ -86,7 +86,7 @@ function createPDFViewerHTML(pdfUrl) {
     `;
 }
 
-// ==================== بدء التشغيل بعد تحميل الصفحة ====================
+// ==================== INIT APRÈS CHARGEMENT ====================
 document.addEventListener('DOMContentLoaded', () => {
 
     const firstName = localStorage.getItem('first_name') || 'Student';
@@ -476,6 +476,14 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
+        // Afficher l'indicateur de chargement
+        const loadingDiv = document.createElement('div');
+        loadingDiv.className = 'message-bubble assistant fade-in';
+        loadingDiv.id = 'loadingIndicator';
+        loadingDiv.innerHTML = `<span class="loading-dots"><i class="fa-solid fa-circle-notch fa-spin mr-1"></i>En train de répondre...</span>`;
+        messagesContainer.appendChild(loadingDiv);
+        if (chatArea) chatArea.scrollTop = chatArea.scrollHeight;
+
         try {
             const historique = session.messages
                 .slice(-6)
@@ -485,6 +493,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 }));
 
             const response = await sendToN8N(text, studentId, historique);
+
+            // Supprimer l'indicateur de chargement
+            const loader = document.getElementById('loadingIndicator');
+            if (loader) loader.remove();
 
             let reply = '';
             let isPDF = false;
@@ -547,15 +559,30 @@ document.addEventListener('DOMContentLoaded', () => {
                 displayMessage(reply, false);
             }
 
-            // ✅ FIX: Rafraîchir l'onglet demandes après une réponse certificat
-            if (reply.includes('certificat') || reply.includes('envoyée') || reply.includes('récupérer')) {
-                loadDemandes();
+            // ✅ FIX PRINCIPAL : Détecter une demande de certificat et afficher dans l'onglet Demandes
+            const isCertificatRequest = 
+                reply.includes('envoyée avec succès') ||
+                reply.includes('en_attente') ||
+                reply.includes('Vous serez notifié') ||
+                reply.includes('déjà soumis') ||
+                reply.includes('déjà en cours') ||
+                (response && response.statut);
+
+            if (isCertificatRequest) {
+                // Attendre 2 secondes que n8n écrive dans Supabase, puis switcher vers l'onglet Demandes
+                setTimeout(() => {
+                    switchTab('demandes');
+                    loadDemandes();
+                }, 2000);
             }
 
             saveSessions();
 
         } catch (error) {
             console.error('Erreur:', error);
+            // Supprimer l'indicateur de chargement en cas d'erreur
+            const loader = document.getElementById('loadingIndicator');
+            if (loader) loader.remove();
             const errorReply = '❌ Erreur de connexion. Veuillez réessayer.';
             session.messages.push({ text: errorReply, isUser: false, timestamp: new Date().toISOString() });
             displayMessage(errorReply, false);
@@ -712,7 +739,7 @@ async function loadDemandes() {
             return;
         }
 
-        // ✅ FIX: Convertir en nombre pour matcher le type bigint de Supabase
+        // Convertir en nombre pour matcher le type bigint de Supabase
         const studentIdNum = parseInt(studentId, 10);
 
         console.log('🔍 Chargement demandes pour student_id:', studentIdNum);
@@ -763,10 +790,12 @@ function renderDemandeCard(demande) {
 
 function renderBadge(statut) {
     const config = {
-        'en_attente': { label: 'En cours', css: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300' },
-        'traite':     { label: 'Récupéré', css: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' }
+        'en_attente': { label: '⏳ En attente', css: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300' },
+        'en_cours':   { label: '🔄 En cours',   css: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' },
+        'pret':       { label: '✅ Prêt',        css: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' },
+        'traite':     { label: '✅ Récupéré',    css: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' }
     };
-    const s = config[statut] || { label: statut, css: 'bg-slate-100 text-slate-500' };
+    const s = config[statut] || { label: statut, css: 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-300' };
     return `<span class="shrink-0 px-2 py-0.5 rounded-full text-[10px] font-bold ${s.css}">${s.label}</span>`;
 }
 
@@ -792,32 +821,41 @@ async function afficherDetailDemande(id) {
 
         messagesContainer.querySelectorAll('.message-bubble, .pdf-viewer-container, .demande-detail-msg').forEach(el => el.remove());
 
+        // Message utilisateur
         const userMsg = document.createElement('div');
         userMsg.className = 'message-bubble fade-in demande-detail-msg';
         userMsg.textContent = `Demande de ${titre}`;
         messagesContainer.appendChild(userMsg);
 
+        // Message statut
         const statusMsg = document.createElement('div');
         statusMsg.className = 'message-bubble assistant fade-in demande-detail-msg';
 
-        if (data.statut === 'pret') {
+        if (data.statut === 'pret' || data.statut === 'traite') {
             statusMsg.innerHTML = `<span class="text-green-600 dark:text-green-400 font-medium">
-               ✅ Votre certificat a été signé et vous a été envoyé par email..
+               ✅ Votre certificat a été signé et vous a été envoyé par email.
+            </span>`;
+        } else if (data.statut === 'en_cours') {
+            statusMsg.innerHTML = `<span class="text-blue-500 dark:text-blue-400 italic text-sm">
+                <i class="fa-solid fa-rotate mr-1"></i>Votre demande est en cours de traitement par l'administration...
             </span>`;
         } else {
-            statusMsg.innerHTML = `<span class="text-slate-400 dark:text-slate-500 italic text-sm">
-                <i class="fa-regular fa-clock mr-1"></i>Votre demande est en cours de traitement...
+            // en_attente
+            statusMsg.innerHTML = `<span class="text-orange-500 dark:text-orange-400 italic text-sm">
+                <i class="fa-regular fa-clock mr-1"></i>Votre demande a été envoyée avec succès. Vous serez notifié dès qu'elle sera prête.
             </span>`;
         }
 
         messagesContainer.appendChild(statusMsg);
 
+        // Infos détaillées
         const infoMsg = document.createElement('div');
         infoMsg.className = 'message-bubble assistant fade-in demande-detail-msg';
         infoMsg.innerHTML = `
             <div class="text-xs text-slate-500 dark:text-slate-400 flex flex-col gap-1">
                 <span>📅 Demandé le : ${new Date(data.created_at).toLocaleDateString('fr-FR')}</span>
                 <span>🔖 Réf : ${data.numero || '—'}</span>
+                <span>📌 Statut : ${renderBadge(data.statut)}</span>
                 ${data.traite_at ? `<span>✅ Traité le : ${new Date(data.traite_at).toLocaleDateString('fr-FR')}</span>` : ''}
             </div>
         `;
