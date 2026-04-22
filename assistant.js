@@ -12,10 +12,8 @@ const N8N_WEBHOOK_URL = 'https://n8n-z4y4.onrender.com/webhook-test/ia';
 supabaseClient.auth.getSession().then(({ data: { session } }) => {
     const studentId = localStorage.getItem('student_id');
     if (!session && !studentId) {
-        // Ni session Supabase ni localStorage → redirect login
         window.location.href = 'login.html';
     }
-    // Si session expirée mais student_id présent → on laisse passer
 });
 
 // ==================== FONCTIONS N8N ====================
@@ -549,11 +547,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 displayMessage(reply, false);
             }
 
-            if (reply.includes('certificat') || reply.includes('récupérer')) {
-                const panelDemandes = document.getElementById('panel-demandes');
-                if (panelDemandes && !panelDemandes.classList.contains('hidden')) {
-                    loadDemandes();
-                }
+            // ✅ FIX: Rafraîchir l'onglet demandes après une réponse certificat
+            if (reply.includes('certificat') || reply.includes('envoyée') || reply.includes('récupérer')) {
+                loadDemandes();
             }
 
             saveSessions();
@@ -716,11 +712,18 @@ async function loadDemandes() {
             return;
         }
 
+        // ✅ FIX: Convertir en nombre pour matcher le type bigint de Supabase
+        const studentIdNum = parseInt(studentId, 10);
+
+        console.log('🔍 Chargement demandes pour student_id:', studentIdNum);
+
         const { data: demandes, error } = await supabaseClient
             .from('demandes_certificats')
             .select('*')
-            .eq('student_id', studentId)
+            .eq('student_id', studentIdNum)
             .order('created_at', { ascending: false });
+
+        console.log('📦 Demandes reçues:', demandes, 'Erreur:', error);
 
         if (error) throw error;
 
@@ -797,9 +800,9 @@ async function afficherDetailDemande(id) {
         const statusMsg = document.createElement('div');
         statusMsg.className = 'message-bubble assistant fade-in demande-detail-msg';
 
-        if (data.statut === 'traite') {
+        if (data.statut === 'pret') {
             statusMsg.innerHTML = `<span class="text-green-600 dark:text-green-400 font-medium">
-                ✅ Votre certificat est prêt. Vous pouvez le récupérer au service de scolarité.
+               ✅ Votre certificat a été signé et vous a été envoyé par email..
             </span>`;
         } else {
             statusMsg.innerHTML = `<span class="text-slate-400 dark:text-slate-500 italic text-sm">
