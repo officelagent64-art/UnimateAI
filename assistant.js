@@ -6,11 +6,12 @@ const supabaseClient = createClient(
 );
 
 // ==================== N8N CONFIG ====================
-const N8N_WEBHOOK_URL = 'https://n8n-mcda.onrender.com/webhook-test/ia';
+const N8N_WEBHOOK_URL = 'https://n8n-z4y4.onrender.com/webhook-test/ia';
 
 // Vérifier session
 supabaseClient.auth.getSession().then(({ data: { session } }) => {
-    if (!session) {
+    const studentId = localStorage.getItem('student_id');
+    if (!session && !studentId) {
         window.location.href = 'login.html';
     }
 });
@@ -546,19 +547,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 displayMessage(reply, false);
             }
 
-            // ✅ FIX : Détecter réponse certificat → switcher onglet Demandes après 2s
-            const isCertificatResponse =
-                (response && response.statut === 'en_attente') ||
-                (response && response.statut === 'existe_deja')  ||
-                reply.includes('envoyée avec succès')            ||
-                reply.includes('Vous serez notifié')             ||
-                reply.includes('déjà soumis')                    ||
-                reply.includes('déjà en cours');
-
-            if (isCertificatResponse) {
-                setTimeout(() => {
-                    switchTab('demandes');
-                }, 2000);
+            // ✅ Rafraîchir + switcher vers l'onglet Demandes après une demande certificat
+            if (reply.includes('certificat') || reply.includes('envoyée') || reply.includes('récupérer') || reply.includes('en_attente')) {
+                await loadDemandes();
+                // Basculer automatiquement vers l'onglet Demandes
+                switchTab('demandes');
             }
 
             saveSessions();
@@ -657,11 +650,117 @@ document.addEventListener('DOMContentLoaded', () => {
     }, 100);
 
     window.addEventListener('resize', () => { adjustInputPosition(); adjustMessagesAlignment(); });
+
 });
 
-// ============================================================
-// ==================== ONGLETS CHATS / DEMANDES ====================
-// ============================================================
+// ==================== SUPABASE REALTIME — Écoute changements statut demandes ====================
+
+let realtimeChannel = null;
+
+function startRealtimeListener() {
+    const studentId = localStorage.getItem('student_id');
+    if (!studentId || realtimeChannel) return;
+
+    const studentIdNum = parseInt(studentId, 10);
+
+    realtimeChannel = supabaseClient
+        .channel('demandes_certificats_changes')
+        .on(
+            'postgres_changes',
+            {
+                event: 'UPDATE',
+                schema: 'public',
+                table: 'demandes_certificats',
+                filter: `student_id=eq.${studentIdNum}`
+            },
+            async (payload) => {
+                console.log('🔔 Realtime UPDATE reçu:', payload);
+
+                const nouveau = payload.new;
+
+                // Rafraîchir la liste des demandes
+                await loadDemandes();
+
+                // Notifier l'étudiant si le statut passe à "pret"
+                if (nouveau.statut === 'pret') {
+                    showNotificationDemande(
+                        '✅ Votre certificat de scolarité est prêt ! Vérifiez votre email.',
+                        'success'
+                    );
+                    // Si l'onglet Demandes est actif, afficher le détail mis à jour
+                    const panelDemandes = document.getElementById('panel-demandes');
+                    if (panelDemandes && !panelDemandes.classList.contains('hidden')) {
+                        // Afficher directement le détail de la demande mise à jour
+                        await afficherDetailDemande(nouveau.id);
+                    }
+                }
+            }
+        )
+        .on(
+            'postgres_changes',
+            {
+                event: 'INSERT',
+                schema: 'public',
+                table: 'demandes_certificats',
+                filter: `student_id=eq.${studentIdNum}`
+            },
+            async (payload) => {
+                console.log('🔔 Realtime INSERT reçu:', payload);
+                await loadDemandes();
+            }
+        )
+        .subscribe((status) => {
+            console.log('📡 Realtime status:', status);
+        });
+}
+
+function stopRealtimeListener() {
+    if (realtimeChannel) {
+        supabaseClient.removeChannel(realtimeChannel);
+        realtimeChannel = null;
+    }
+}
+
+function showNotificationDemande(message, type = 'info') {
+    const colors = {
+        success: 'bg-green-600',
+        info: 'bg-blue-600',
+        warning: 'bg-orange-500',
+        error: 'bg-red-600'
+    };
+    const notification = document.createElement('div');
+    notification.className = `fixed top-5 right-5 ${colors[type] || colors.info} text-white px-5 py-3 rounded-xl text-sm shadow-2xl z-[9999] flex items-center gap-3 max-w-sm`;
+    notification.innerHTML = `
+        <span class="flex-1">${message}</span>
+        <button onclick="this.parentElement.remove()" class="opacity-70 hover:opacity-100 text-lg leading-none">×</button>
+    `;
+    document.body.appendChild(notification);
+
+    // Auto-remove après 6 secondes
+    setTimeout(() => {
+        if (notification.parentElement) {
+            notification.style.transition = 'opacity 0.3s';
+            notification.style.opacity = '0';
+            setTimeout(() => notification.remove(), 300);
+        }
+    }, 6000);
+}
+
+// Démarrer l'écoute Realtime quand la page est chargée
+document.addEventListener('DOMContentLoaded', () => {
+    // Vérifier que l'étudiant est connecté avant de démarrer le Realtime
+    setTimeout(() => {
+        const studentId = localStorage.getItem('student_id');
+        if (studentId) {
+            startRealtimeListener();
+        }
+    }, 500);
+});
+
+// Nettoyer le channel si l'étudiant quitte la page
+window.addEventListener('beforeunload', stopRealtimeListener);
+
+
 
 const DEMANDE_LABELS = {
     'certificat_scolarite': 'Certificat scolarité',
@@ -720,7 +819,7 @@ async function loadDemandes() {
             return;
         }
 
-        // ✅ FIX : Convertir en nombre pour matcher le type bigint de Supabase
+        // ✅ FIX: Convertir en nombre pour matcher le type bigint de Supabase
         const studentIdNum = parseInt(studentId, 10);
 
         console.log('🔍 Chargement demandes pour student_id:', studentIdNum);
@@ -771,8 +870,8 @@ function renderDemandeCard(demande) {
 
 function renderBadge(statut) {
     const config = {
-        'en_attente': { label: 'En attente', css: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300' },
-        'traite':     { label: 'Récupéré',   css: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' }
+        'en_attente': { label: 'En cours', css: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300' },
+        'pret':       { label: 'Prêt',     css: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' }
     };
     const s = config[statut] || { label: statut, css: 'bg-slate-100 text-slate-500' };
     return `<span class="shrink-0 px-2 py-0.5 rounded-full text-[10px] font-bold ${s.css}">${s.label}</span>`;
@@ -808,9 +907,9 @@ async function afficherDetailDemande(id) {
         const statusMsg = document.createElement('div');
         statusMsg.className = 'message-bubble assistant fade-in demande-detail-msg';
 
-        if (data.statut === 'traite') {
+        if (data.statut === 'pret') {
             statusMsg.innerHTML = `<span class="text-green-600 dark:text-green-400 font-medium">
-                ✅ Votre certificat est prêt. Vous pouvez le récupérer au service de scolarité.
+               ✅ Votre certificat est <strong>prêt</strong> ! Il vous a été envoyé par email. Vérifiez votre boîte de réception.
             </span>`;
         } else {
             statusMsg.innerHTML = `<span class="text-slate-400 dark:text-slate-500 italic text-sm">
