@@ -1,12 +1,10 @@
 // ==================== Supabase Init ====================
 const { createClient } = supabase;
 
-// Un seul client Supabase — même base pour auth ET demandes
 const supabaseClient = createClient(
     'https://zpkddqkqyjrfogjcjpwz.supabase.co',
     'sb_publishable_7kQXBCZVBKvxqTyqdLC-HA_3TteXaTd'
 );
-
 
 // ==================== N8N CONFIG ====================
 const N8N_WEBHOOK_URL = 'https://n8n-z4y4.onrender.com/webhook-test/ia';
@@ -19,6 +17,22 @@ supabaseClient.auth.getSession().then(({ data: { session } }) => {
     }
 });
 
+// ==================== UTILITAIRE — Formatage des messages ====================
+
+/**
+ * Convertit le markdown en HTML lisible
+ * **texte** → <strong>texte</strong>
+ * *texte*  → <em>texte</em>
+ * \n       → <br>
+ */
+const formatMessage = (text) => {
+    if (!text) return '';
+    return text
+        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')  // gras
+        .replace(/\*(.*?)\*/g, '<em>$1</em>')               // italique
+        .replace(/\n/g, '<br>');                             // retours à la ligne
+};
+
 // ==================== FONCTIONS N8N ====================
 
 async function sendToN8N(question, studentId, historique = []) {
@@ -28,8 +42,8 @@ async function sendToN8N(question, studentId, historique = []) {
         const res = await fetch(N8N_WEBHOOK_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-                question, 
+            body: JSON.stringify({
+                question,
                 student_id: studentId,
                 historique: historique
             })
@@ -89,7 +103,7 @@ function createPDFViewerHTML(pdfUrl) {
     `;
 }
 
-// ==================== بدء التشغيل بعد تحميل الصفحة ====================
+// ==================== DÉMARRAGE APRÈS CHARGEMENT DE LA PAGE ====================
 document.addEventListener('DOMContentLoaded', () => {
 
     const firstName = localStorage.getItem('first_name') || 'Student';
@@ -416,6 +430,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     pdfDiv.innerHTML = createPDFViewerHTML(msg.pdfUrl);
                     messagesContainer.appendChild(pdfDiv);
                 } else {
+                    // ✅ CORRECTION : utiliser displayMessage qui formate le markdown
                     displayMessage(msg.text, msg.isUser);
                 }
             });
@@ -436,17 +451,63 @@ document.addEventListener('DOMContentLoaded', () => {
         if (greetingContainer) greetingContainer.style.display = 'flex';
     };
 
+    // ✅ CORRECTION PRINCIPALE — Affichage avec rendu markdown
     const displayMessage = (text, isUser = true) => {
         if (!messagesContainer) return;
         const messageDiv = document.createElement('div');
-        messageDiv.className = isUser ? 'message-bubble fade-in' : 'message-bubble assistant fade-in';
-        messageDiv.textContent = text;
+        messageDiv.className = isUser
+            ? 'message-bubble fade-in'
+            : 'message-bubble assistant fade-in';
+
+        if (isUser) {
+            // Messages utilisateur : texte brut (pas de markdown)
+            messageDiv.textContent = text;
+        } else {
+            // Messages IA : rendu markdown → HTML
+            messageDiv.innerHTML = formatMessage(text);
+        }
+
         if (greetingContainer && greetingContainer.style.display !== 'none') {
             messagesContainer.insertBefore(messageDiv, greetingContainer);
         } else {
             messagesContainer.appendChild(messageDiv);
         }
         if (chatArea) chatArea.scrollTop = chatArea.scrollHeight;
+    };
+
+    // ✅ AJOUT — Indicateur de frappe (les trois points animés)
+    const showTypingIndicator = () => {
+        if (!messagesContainer) return;
+        const div = document.createElement('div');
+        div.className = 'message-bubble assistant fade-in';
+        div.id = 'typing-indicator';
+        div.innerHTML = `
+            <span style="display:inline-flex;gap:4px;align-items:center;">
+                <span style="width:7px;height:7px;border-radius:50%;background:currentColor;opacity:0.4;animation:typingDot 1.2s infinite;animation-delay:0s;"></span>
+                <span style="width:7px;height:7px;border-radius:50%;background:currentColor;opacity:0.4;animation:typingDot 1.2s infinite;animation-delay:0.4s;"></span>
+                <span style="width:7px;height:7px;border-radius:50%;background:currentColor;opacity:0.4;animation:typingDot 1.2s infinite;animation-delay:0.8s;"></span>
+            </span>
+        `;
+
+        // Ajouter le keyframe si pas encore présent
+        if (!document.getElementById('typing-style')) {
+            const style = document.createElement('style');
+            style.id = 'typing-style';
+            style.textContent = `
+                @keyframes typingDot {
+                    0%, 80%, 100% { opacity: 0.2; transform: scale(0.8); }
+                    40%           { opacity: 1;   transform: scale(1.2); }
+                }
+            `;
+            document.head.appendChild(style);
+        }
+
+        messagesContainer.appendChild(div);
+        if (chatArea) chatArea.scrollTop = chatArea.scrollHeight;
+    };
+
+    const removeTypingIndicator = () => {
+        document.getElementById('typing-indicator')?.remove();
     };
 
     // ==================== ENVOYER MESSAGE À N8N ====================
@@ -472,12 +533,17 @@ document.addEventListener('DOMContentLoaded', () => {
         const studentId = localStorage.getItem('student_id');
 
         if (!studentId) {
-            const reply = "❌ Session expirée";
+            const reply = "Session expirée. Veuillez vous reconnecter.";
             session.messages.push({ text: reply, isUser: false, timestamp: new Date().toISOString() });
             displayMessage(reply, false);
             saveSessions();
             return;
         }
+
+        // ✅ AJOUT — Désactiver l'input + afficher l'indicateur de frappe
+        if (chatInput) chatInput.disabled = true;
+        if (sendBtn) sendBtn.disabled = true;
+        showTypingIndicator();
 
         try {
             const historique = session.messages
@@ -488,6 +554,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 }));
 
             const response = await sendToN8N(text, studentId, historique);
+
+            // ✅ AJOUT — Supprimer l'indicateur de frappe dès la réponse reçue
+            removeTypingIndicator();
 
             let reply = '';
             let isPDF = false;
@@ -519,8 +588,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 reply = response.output;
             } else if (response && response.message) {
                 reply = response.message;
+            } else if (response && response.response) {
+                reply = response.response;
             } else if (response && response.error) {
-                reply = '❌ ' + response.message;
+                reply = 'Erreur : ' + response.message;
             } else if (typeof response === 'string') {
                 reply = response;
             } else {
@@ -547,11 +618,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 messagesContainer.appendChild(pdfDiv);
                 if (chatArea) chatArea.scrollTop = chatArea.scrollHeight;
             } else {
+                // ✅ CORRECTION — displayMessage formate maintenant le markdown
                 displayMessage(reply, false);
             }
 
-            // ✅ Détecter réponse certificat via statut n8n OU mots-clés dans le message
-            const isCertificatResponse = 
+            // Détecter réponse certificat
+            const isCertificatResponse =
                 (response && response.statut === 'en_attente') ||
                 (response && response.numero) ||
                 reply.includes('certificat') ||
@@ -560,13 +632,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 reply.includes('prêt');
 
             if (isCertificatResponse) {
-                // Switcher immédiatement vers l'onglet Demandes
                 switchTab('demandes');
-                // 1er essai rapide
                 setTimeout(async () => { await loadDemandes(); }, 500);
-                // 2e essai au cas où Supabase/Postgres met du temps
                 setTimeout(async () => { await loadDemandes(); }, 2000);
-                // 3e essai de sécurité
                 setTimeout(async () => { await loadDemandes(); }, 5000);
             }
 
@@ -574,10 +642,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
         } catch (error) {
             console.error('Erreur:', error);
-            const errorReply = '❌ Erreur de connexion. Veuillez réessayer.';
+            removeTypingIndicator();
+            const errorReply = 'Erreur de connexion. Veuillez réessayer.';
             session.messages.push({ text: errorReply, isUser: false, timestamp: new Date().toISOString() });
             displayMessage(errorReply, false);
             saveSessions();
+        } finally {
+            // ✅ AJOUT — Réactiver l'input dans tous les cas (succès ou erreur)
+            if (chatInput) {
+                chatInput.disabled = false;
+                chatInput.focus();
+            }
+            if (sendBtn) sendBtn.disabled = chatInput ? chatInput.value.trim() === '' : true;
         }
     };
 
@@ -589,7 +665,12 @@ document.addEventListener('DOMContentLoaded', () => {
     if (newChatBtn) newChatBtn.addEventListener('click', resetToNewChat);
 
     if (chatInput && sendBtn) {
-        chatInput.addEventListener('input', () => { sendBtn.disabled = chatInput.value.trim() === ''; });
+        chatInput.addEventListener('input', () => {
+            // Ne pas activer le bouton si l'input est désactivé (IA en train de répondre)
+            if (!chatInput.disabled) {
+                sendBtn.disabled = chatInput.value.trim() === '';
+            }
+        });
         sendBtn.addEventListener('click', () => {
             const msg = chatInput.value.trim();
             if (msg === '') return;
@@ -598,7 +679,10 @@ document.addEventListener('DOMContentLoaded', () => {
             sendBtn.disabled = true;
         });
         chatInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter' && !sendBtn.disabled) { e.preventDefault(); sendBtn.click(); }
+            if (e.key === 'Enter' && !sendBtn.disabled && !chatInput.disabled) {
+                e.preventDefault();
+                sendBtn.click();
+            }
         });
     }
 
@@ -669,7 +753,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 });
 
-// ==================== SUPABASE REALTIME — Écoute changements statut demandes ====================
+// ==================== SUPABASE REALTIME ====================
 
 let realtimeChannel = null;
 
@@ -691,22 +775,15 @@ function startRealtimeListener() {
             },
             async (payload) => {
                 console.log('🔔 Realtime UPDATE reçu:', payload);
-
                 const nouveau = payload.new;
-
-                // Rafraîchir la liste des demandes
                 await loadDemandes();
-
-                // Notifier l'étudiant si le statut passe à "pret"
                 if (nouveau.statut === 'pret') {
                     showNotificationDemande(
                         '✅ Votre certificat de scolarité est prêt ! Vérifiez votre email.',
                         'success'
                     );
-                    // Si l'onglet Demandes est actif, afficher le détail mis à jour
                     const panelDemandes = document.getElementById('panel-demandes');
                     if (panelDemandes && !panelDemandes.classList.contains('hidden')) {
-                        // Afficher directement le détail de la demande mise à jour
                         await afficherDetailDemande(nouveau.id);
                     }
                 }
@@ -751,8 +828,6 @@ function showNotificationDemande(message, type = 'info') {
         <button onclick="this.parentElement.remove()" class="opacity-70 hover:opacity-100 text-lg leading-none">×</button>
     `;
     document.body.appendChild(notification);
-
-    // Auto-remove après 6 secondes
     setTimeout(() => {
         if (notification.parentElement) {
             notification.style.transition = 'opacity 0.3s';
@@ -762,9 +837,7 @@ function showNotificationDemande(message, type = 'info') {
     }, 6000);
 }
 
-// Démarrer l'écoute Realtime quand la page est chargée
 document.addEventListener('DOMContentLoaded', () => {
-    // Vérifier que l'étudiant est connecté avant de démarrer le Realtime
     setTimeout(() => {
         const studentId = localStorage.getItem('student_id');
         if (studentId) {
@@ -773,10 +846,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }, 500);
 });
 
-// Nettoyer le channel si l'étudiant quitte la page
 window.addEventListener('beforeunload', stopRealtimeListener);
 
-
+// ==================== DEMANDES ====================
 
 const DEMANDE_LABELS = {
     'certificat_scolarite': 'Certificat scolarité',
@@ -835,9 +907,7 @@ async function loadDemandes() {
             return;
         }
 
-        // student_id est bigint dans Supabase
         const studentIdNum = parseInt(studentId, 10);
-
         console.log('🔍 Chargement demandes pour student_id:', studentIdNum);
 
         const { data: demandes, error } = await supabaseClient
