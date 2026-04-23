@@ -1,9 +1,12 @@
 // ==================== Supabase Init ====================
 const { createClient } = supabase;
+
+// Un seul client Supabase — même base pour auth ET demandes
 const supabaseClient = createClient(
     'https://zpkddqkqyjrfogjcjpwz.supabase.co',
     'sb_publishable_7kQXBCZVBKvxqTyqdLC-HA_3TteXaTd'
 );
+
 
 // ==================== N8N CONFIG ====================
 const N8N_WEBHOOK_URL = 'https://n8n-z4y4.onrender.com/webhook-test/ia';
@@ -547,11 +550,24 @@ document.addEventListener('DOMContentLoaded', () => {
                 displayMessage(reply, false);
             }
 
-            // ✅ Rafraîchir + switcher vers l'onglet Demandes après une demande certificat
-            if (reply.includes('certificat') || reply.includes('envoyée') || reply.includes('récupérer') || reply.includes('en_attente')) {
-                await loadDemandes();
-                // Basculer automatiquement vers l'onglet Demandes
+            // ✅ Détecter réponse certificat via statut n8n OU mots-clés dans le message
+            const isCertificatResponse = 
+                (response && response.statut === 'en_attente') ||
+                (response && response.numero) ||
+                reply.includes('certificat') ||
+                reply.includes('envoy') ||
+                reply.includes('notifi') ||
+                reply.includes('prêt');
+
+            if (isCertificatResponse) {
+                // Switcher immédiatement vers l'onglet Demandes
                 switchTab('demandes');
+                // 1er essai rapide
+                setTimeout(async () => { await loadDemandes(); }, 500);
+                // 2e essai au cas où Supabase/Postgres met du temps
+                setTimeout(async () => { await loadDemandes(); }, 2000);
+                // 3e essai de sécurité
+                setTimeout(async () => { await loadDemandes(); }, 5000);
             }
 
             saveSessions();
@@ -819,14 +835,14 @@ async function loadDemandes() {
             return;
         }
 
-        // ✅ FIX: Convertir en nombre pour matcher le type bigint de Supabase
+        // student_id est bigint dans Supabase
         const studentIdNum = parseInt(studentId, 10);
 
         console.log('🔍 Chargement demandes pour student_id:', studentIdNum);
 
         const { data: demandes, error } = await supabaseClient
             .from('demandes_certificats')
-            .select('*')
+            .select('id, student_id, statut, created_at')
             .eq('student_id', studentIdNum)
             .order('created_at', { ascending: false });
 
@@ -853,18 +869,16 @@ async function loadDemandes() {
 
 function renderDemandeCard(demande) {
     const date  = new Date(demande.created_at).toLocaleDateString('fr-FR');
-    const titre = DEMANDE_LABELS[demande.type_demande] || 'Certificat scolarité';
     const badge = renderBadge(demande.statut);
 
     return `
         <div onclick="afficherDetailDemande('${demande.id}')"
             class="mx-1 p-3 rounded-xl cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors border border-slate-100 dark:border-slate-800 mb-1">
             <div class="flex items-start justify-between gap-2">
-                <span class="text-xs font-semibold text-slate-700 dark:text-slate-200 leading-tight">${titre}</span>
+                <span class="text-xs font-semibold text-slate-700 dark:text-slate-200 leading-tight">Certificat de scolarité</span>
                 ${badge}
             </div>
             <p class="text-[11px] text-slate-400 dark:text-slate-500 mt-1.5">${date}</p>
-            <p class="text-[10px] text-slate-300 dark:text-slate-600 mt-0.5 truncate">Réf: ${demande.numero || '—'}</p>
         </div>`;
 }
 
@@ -887,9 +901,8 @@ async function afficherDetailDemande(id) {
 
         if (error || !data) return;
 
-        const titre = DEMANDE_LABELS[data.type_demande] || 'Certificat scolarité';
         const chatTitleSpan = document.getElementById('chatTitleSpan');
-        if (chatTitleSpan) chatTitleSpan.textContent = titre;
+        if (chatTitleSpan) chatTitleSpan.textContent = 'Certificat de scolarité';
 
         const messagesContainer = document.getElementById('messagesContainer');
         const greetingContainer = document.getElementById('greetingContainer');
@@ -901,7 +914,7 @@ async function afficherDetailDemande(id) {
 
         const userMsg = document.createElement('div');
         userMsg.className = 'message-bubble fade-in demande-detail-msg';
-        userMsg.textContent = `Demande de ${titre}`;
+        userMsg.textContent = 'Demande de certificat de scolarité';
         messagesContainer.appendChild(userMsg);
 
         const statusMsg = document.createElement('div');
@@ -924,8 +937,6 @@ async function afficherDetailDemande(id) {
         infoMsg.innerHTML = `
             <div class="text-xs text-slate-500 dark:text-slate-400 flex flex-col gap-1">
                 <span>📅 Demandé le : ${new Date(data.created_at).toLocaleDateString('fr-FR')}</span>
-                <span>🔖 Réf : ${data.numero || '—'}</span>
-                ${data.traite_at ? `<span>✅ Traité le : ${new Date(data.traite_at).toLocaleDateString('fr-FR')}</span>` : ''}
             </div>
         `;
         messagesContainer.appendChild(infoMsg);
