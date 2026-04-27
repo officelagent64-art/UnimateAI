@@ -954,8 +954,8 @@ function renderDemandeCard(demande) {
 
 function renderBadge(statut) {
     const config = {
-        'en_attente': { label: 'En cours', css: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300' },
-        'pret':       { label: 'Prêt',     css: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' }
+        'in_progress': { label: 'in progress', css: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300' },
+        'Ready':       { label: 'Prêt',     css: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' }
     };
     const s = config[statut] || { label: statut, css: 'bg-slate-100 text-slate-500' };
     return `<span class="shrink-0 px-2 py-0.5 rounded-full text-[10px] font-bold ${s.css}">${s.label}</span>`;
@@ -992,11 +992,11 @@ async function afficherDetailDemande(id) {
 
         if (data.statut === 'pret') {
             statusMsg.innerHTML = `<span class="text-green-600 dark:text-green-400 font-medium">
-               ✅ Votre certificat est <strong>prêt</strong> ! Il vous a été envoyé par email. Vérifiez votre boîte de réception.
+               ✅ Your certificate is  <strong>ready</strong> ! Il vous a été envoyé par email. Vérifiez votre boîte de réception.
             </span>`;
         } else {
             statusMsg.innerHTML = `<span class="text-slate-400 dark:text-slate-500 italic text-sm">
-                <i class="fa-regular fa-clock mr-1"></i>Votre demande est en cours de traitement...
+                <i class="fa-regular fa-clock mr-1"></i>Your request is being processed...
             </span>`;
         }
 
